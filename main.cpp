@@ -34,44 +34,89 @@ void GenerateSineWave(std::vector<BYTE>& buffer, int sampleRate, int frequency, 
     }
 }
 
-IXAudio2SourceVoice* createSinVoice( int hz )
+/*
+class MyVoiceCallback : public IXAudio2VoiceCallback {
+public:
+    void STDMETHODCALLTYPE OnVoiceProcessingPassStart(UINT32 BytesRequired) override {
+        // 次のオーディオバッファを生成する処理
+        XAUDIO2_BUFFER buffer = { 0 };
+        buffer.AudioBytes = sampleSize * sizeof(float); // フロート配列のサイズ
+        buffer.pAudioData = reinterpret_cast<BYTE*>(audioDataBuffer);  // 波形データのポインタ
+        buffer.Flags = XAUDIO2_END_OF_STREAM;
+
+        // 新しいデータを再生する
+        sourceVoice->SubmitSourceBuffer(&buffer);
+    }
+
+    void STDMETHODCALLTYPE OnBufferEnd(void* pBufferContext) override {
+        // バッファの再供給をする処理
+        OnVoiceProcessingPassStart(0);
+    }
+
+    // 他のコールバックメソッドは必要に応じて実装
+};
+*/
+
+class SinVoice
 {
+private:
     IXAudio2SourceVoice* pSourceVoice = nullptr;
+    XAUDIO2_BUFFER buffer = { 0 };
 
-    // WAVEFORMATEX 構造体の設定（サイン波のフォーマット）
-    WAVEFORMATEX waveFormat = { 0 };
-    waveFormat.wFormatTag = WAVE_FORMAT_IEEE_FLOAT;  // 浮動小数点数形式
-    waveFormat.nChannels = 1;                        // モノラル
-    waveFormat.nSamplesPerSec = SAMPLE_RATE;         // サンプルレート
-    waveFormat.nAvgBytesPerSec = SAMPLE_RATE * sizeof(float);  // 平均バイト数
-    waveFormat.nBlockAlign = sizeof(float);          // ブロックアライン
-    waveFormat.wBitsPerSample = 32;                  // 32ビット浮動小数点
-    waveFormat.cbSize = 0;
+public:
+    SinVoice( int hz )
+    {
+        // WAVEFORMATEX 構造体の設定（サイン波のフォーマット）
+        WAVEFORMATEX waveFormat = { 0 };
+        waveFormat.wFormatTag = WAVE_FORMAT_IEEE_FLOAT;  // 浮動小数点数形式
+        waveFormat.nChannels = 1;                        // モノラル
+        waveFormat.nSamplesPerSec = SAMPLE_RATE;         // サンプルレート
+        waveFormat.nAvgBytesPerSec = SAMPLE_RATE * sizeof(float);  // 平均バイト数
+        waveFormat.nBlockAlign = sizeof(float);          // ブロックアライン
+        waveFormat.wBitsPerSample = 32;                  // 32ビット浮動小数点
+        waveFormat.cbSize = 0;
 
-    // ソースボイスの作成
-    HRESULT hr = pXAudio2->CreateSourceVoice(&pSourceVoice, &waveFormat);
-    if (FAILED(hr)) {
-        throw "ソースボイスの作成に失敗しました。";
+        // ソースボイスの作成
+        HRESULT hr = pXAudio2->CreateSourceVoice(&pSourceVoice, &waveFormat);
+        if (FAILED(hr)) {
+            throw "ソースボイスの作成に失敗しました。";
+        }
+
+        // サイン波データの生成
+        std::vector<BYTE>& waveData = *( new std::vector<BYTE>() );
+        GenerateSineWave(waveData, SAMPLE_RATE, hz, DURATION);
+
+        // サウンドバッファの設定
+        buffer.AudioBytes = static_cast<UINT32>(waveData.size());
+        buffer.pAudioData = waveData.data();
+        buffer.Flags = XAUDIO2_END_OF_STREAM;
     }
 
-    // サイン波データの生成
-    std::vector<BYTE>& waveData = *( new std::vector<BYTE>() );
-    GenerateSineWave(waveData, SAMPLE_RATE, hz, DURATION);
-
-    // サウンドバッファの設定
-    XAUDIO2_BUFFER& buffer = *( new XAUDIO2_BUFFER{ 0 } );
-    buffer.AudioBytes = static_cast<UINT32>(waveData.size());
-    buffer.pAudioData = waveData.data();
-    buffer.Flags = XAUDIO2_END_OF_STREAM;
-
-    // バッファをソースボイスに送信
-    hr = pSourceVoice->SubmitSourceBuffer(&buffer);
-    if (FAILED(hr)) {
-        throw "バッファの送信に失敗しました。";
+    ~SinVoice()
+    {
+        pSourceVoice->DestroyVoice();
     }
 
-    return pSourceVoice;
-}
+    void Play()
+    {        
+        // バッファをソースボイスに送信
+        HRESULT hr = pSourceVoice->SubmitSourceBuffer(&buffer);
+
+        if ( FAILED( hr ) )
+        {
+            throw "バッファの送信に失敗しました。";
+        }
+
+        hr = pSourceVoice->Start( 0 );
+
+        if ( FAILED(hr) )
+        {
+            throw "再生に失敗しました。";
+        }
+    }
+
+    IXAudio2SourceVoice* getSourceVoice () { return pSourceVoice; }
+};
 
 int main() {
     // COM
@@ -98,47 +143,48 @@ int main() {
         return -1;
     }
 
-    auto a = createSinVoice( 264 );
-    auto b = createSinVoice( 330 );
-    auto c = createSinVoice( 396 );
-
-    IUnknown * pXAPO;
-    CreateFX( __uuidof( FXEcho ), & pXAPO );
-
-    XAUDIO2_EFFECT_DESCRIPTOR descriptor;
-    descriptor.InitialState = true;
-    descriptor.OutputChannels = 1;
-    descriptor.pEffect = pXAPO;
-
-    XAUDIO2_EFFECT_CHAIN chain;
-    chain.EffectCount = 1;
-    chain.pEffectDescriptors = &descriptor;
-
-    a->SetEffectChain( & chain );
-    // b->SetEffectChain( & chain );
-    // c->SetEffectChain( & chain );
-
-    // 再生開始
-    hr = a->Start( 0 );
-
-    if ( FAILED(hr) )
     {
-        std::cerr << "再生に失敗しました。" << std::endl;
-        return -1;
+        auto a = SinVoice( 264 );
+        auto b = SinVoice( 330 );
+        auto c = SinVoice( 396 );
+
+        IUnknown * pXAPO;
+        CreateFX( __uuidof( FXEcho ), & pXAPO );
+
+        XAUDIO2_EFFECT_DESCRIPTOR descriptor;
+        descriptor.InitialState = true;
+        descriptor.OutputChannels = 1;
+        descriptor.pEffect = pXAPO;
+
+        XAUDIO2_EFFECT_CHAIN chain;
+        chain.EffectCount = 1;
+        chain.pEffectDescriptors = &descriptor;
+
+        a.getSourceVoice()->SetEffectChain( & chain );
+        // b.getSourceVoice()->SetEffectChain( & chain );
+        // c.getSourceVoice()->SetEffectChain( & chain );
+
+        while ( ( GetAsyncKeyState( VK_ESCAPE ) & 0x8000 ) == 0 )
+        {
+		    if ( GetAsyncKeyState( 'A' ) & 0x0001 )
+            {
+                a.Play();
+            }
+            if ( GetAsyncKeyState( 'S' ) & 0x0001 )
+            {
+                b.Play();
+            }
+            if ( GetAsyncKeyState( 'D' ) & 0x0001 )
+            {
+                c.Play();
+            }
+
+		    Sleep( 16 );
+	    }
+
+        // 終了処理
+        pXAPO->Release();
     }
-    b->Start( 0 );
-    c->Start( 0 );
-
-    // 再生中の待機
-    std::cout << "サイン波を再生中..." << std::endl;
-    Sleep(static_cast<DWORD>(10 * 1000));  // 再生時間だけ待機
-
-    // 終了処理
-    pXAPO->Release();
-
-    a->DestroyVoice();
-    b->DestroyVoice();
-    c->DestroyVoice();
 
     pMasterVoice->DestroyVoice();
     pXAudio2->Release();
