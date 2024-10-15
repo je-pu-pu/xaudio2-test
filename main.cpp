@@ -8,7 +8,7 @@
 
 // 定数設定
 const int SAMPLE_RATE = 44100;    // サンプルレート（44.1kHz）
-const float DURATION = 0.5f;      // 再生時間（秒）
+const float DURATION = 1.f;      // 再生時間（秒）
 
 IXAudio2* pXAudio2 = nullptr;
 
@@ -98,7 +98,13 @@ public:
     }
 
     void Play()
-    {        
+    {
+        pSourceVoice->Stop();
+
+
+        // これが大事
+        pSourceVoice->FlushSourceBuffers();
+
         // バッファをソースボイスに送信
         HRESULT hr = pSourceVoice->SubmitSourceBuffer(&buffer);
 
