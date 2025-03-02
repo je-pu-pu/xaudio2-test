@@ -4,11 +4,18 @@
 #include <cmath>
 #include <vector>
 
+// #define LIBREMIDI_WINMM 1
+// #include <libremidi/libremidi.hpp>
+#include <libremidi/reader.hpp>
+#include <fstream>
+
+#include <chrono>
+
 // #pragma comment(lib, "XAPOFX.lib")
 
 // 定数設定
 const int SAMPLE_RATE = 44100;    // サンプルレート（44.1kHz）
-const float DURATION = 1.f;      // 再生時間（秒）
+const float DURATION = 0.5f;      // 再生時間（秒）
 
 IXAudio2* pXAudio2 = nullptr;
 
@@ -17,8 +24,8 @@ void GenerateSineWave(std::vector<BYTE>& buffer, int sampleRate, int frequency, 
     int sampleCount = static_cast<int>(sampleRate * duration);
     buffer.resize(sampleCount * sizeof(float));
 
-    float atack = 0.01f;
-    float release_time = 0.1f;
+    float atack = DURATION * 0.01f;
+    float release_time = DURATION * 0.25f;
 
     for (int i = 0; i < sampleCount; ++i) {
         // float level = sinf( 3.14159f * i / sampleRate * DURATION );
@@ -124,7 +131,32 @@ public:
     IXAudio2SourceVoice* getSourceVoice () { return pSourceVoice; }
 };
 
-int main() {
+libremidi::midi_track read_midi( const char* midi_file_path )
+{
+    // Read raw from a MIDI file
+    std::ifstream file{ midi_file_path , std::ios::binary };
+
+    std::vector<uint8_t> bytes;
+    bytes.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+
+    // Initialize our reader object
+    libremidi::reader r;
+
+    // Parse
+    libremidi::reader::parse_result result = r.parse(bytes);
+
+    if ( result == libremidi::reader::invalid )
+    {
+        throw "load midi file failed";
+    }
+
+    return r.tracks[ 1 ]; // @todo 複数トラック対応
+}
+
+int main()
+{
+    libremidi::midi_track track = read_midi( "./test.mid" );
+
     // COM
     HRESULT hr = ::CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (FAILED(hr))
@@ -150,9 +182,9 @@ int main() {
     }
 
     {
-        auto a = SinVoice( 264 );
-        auto b = SinVoice( 330 );
-        auto c = SinVoice( 396 );
+        auto a = SinVoice( 264 / 2 );
+        auto b = SinVoice( 330 / 2 );
+        auto c = SinVoice( 396 / 2 );
 
         IUnknown * pXAPO;
         CreateFX( __uuidof( FXEcho ), & pXAPO );
@@ -170,6 +202,10 @@ int main() {
         // b.getSourceVoice()->SetEffectChain( & chain );
         // c.getSourceVoice()->SetEffectChain( & chain );
 
+        auto midi_event = track.begin();
+        auto last_time = std::chrono::system_clock::now();
+        auto tick = std::chrono::milliseconds::zero();
+
         while ( ( GetAsyncKeyState( VK_ESCAPE ) & 0x8000 ) == 0 )
         {
 		    if ( GetAsyncKeyState( 'A' ) & 0x0001 )
@@ -185,7 +221,61 @@ int main() {
                 c.Play();
             }
 
-		    Sleep( 16 );
+            auto now = std::chrono::system_clock::now();
+            tick = tick + std::chrono::duration_cast< std::chrono::milliseconds >( now - last_time ) * 2;
+            last_time = now;
+
+            for ( ; midi_event != track.end(); midi_event++ )
+            {
+                for ( ; midi_event != track.end(); midi_event++ )
+                {
+                    if ( midi_event->m.is_note_on_or_off() )
+                    {
+                        break;
+                    }
+                }
+
+                if ( midi_event == track.end() )
+                {
+                    break;
+                }
+
+                if ( tick.count() >= midi_event->tick )
+                {
+                    if ( midi_event->m.get_message_type() == libremidi::message_type::NOTE_ON && midi_event->m.bytes[ 2 ] > 0 )
+                    {
+                        if ( midi_event->m.bytes[ 1 ] % 4 >= 2 )
+                        {
+                            c.Play();
+                        }
+                        else
+                        {
+                            b.Play();
+                        }
+                    }
+
+                    tick -= std::chrono::milliseconds( midi_event->tick );
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            /*
+            if ( midi_event->m.is_note_on_or_off() )
+            {
+                // std::cout << event.tick << " : " << event.track << " : " <<
+                //    ( event.m.get_message_type() == libremidi::message_type::NOTE_ON ? "ON " : "OFF " ) <<
+                //    int( event.m.bytes[ 1 ] ) << " : " << int( event.m.bytes[ 2 ] ) << std::endl;
+            }
+            else
+            {
+                // std::cout << (int) event.m.bytes[0] << '\n';
+            }
+            */
+
+		    Sleep( 10 );
 	    }
 
         // 終了処理
